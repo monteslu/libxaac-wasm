@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Fast lane: lint + pure-JS unit tests (MP4 wrapper). No Emscripten needed, so
+  # this stays green even before the wasm encoder is built.
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  # Full build: install emsdk, vendor libxaac, compile the wasm encoder, run the
+  # encode round-trip + stem-mp4 acceptance tests, then the ffmpeg benchmark.
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install ffmpeg (for the benchmark gate)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.18
+
+      - run: npm ci
+
+      - name: Vendor libxaac
+        run: npm run vendor
+
+      - name: Build wasm encoder
+        run: npm run build
+
+      - name: Test (incl. encode round-trip + stem-mp4 acceptance)
+        run: npm test
+
+      - name: Benchmark vs ffmpeg
+        run: npm run bench
+
+      - name: Upload built artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxaac-wasm-dist
+          path: dist/libxaac.js

@@ -1,0 +1,27 @@
+node_modules/
+
+# Vendored upstream source (fetched by scripts/vendor-libxaac.sh, not committed)
+vendor/
+
+# Build intermediates
+build/
+*.o
+*.a
+*.bc
+
+# Emscripten output is committed in dist/ (the published artifact), but local
+# scratch builds go here
+dist/tmp/
+
+# Test scratch + generated fixtures (large audio is generated, not committed)
+test/fixtures/*.wav
+test/fixtures/*.m4a
+test/fixtures/*.aac
+test/out/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

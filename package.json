@@ -1,0 +1,48 @@
+{
+  "name": "libxaac-wasm",
+  "version": "0.1.0",
+  "description": "Tiny, portable WASM AAC-LC encoder (Ittiam libxaac) for Node and the browser. PCM in, AAC-in-MP4 out.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "vendor": "bash scripts/vendor-libxaac.sh",
+    "build": "bash scripts/build.sh",
+    "test": "node --test 'test/**/*.test.js'",
+    "bench": "node test/bench.js",
+    "lint": "eslint src test"
+  },
+  "keywords": [
+    "aac",
+    "aac-lc",
+    "encoder",
+    "wasm",
+    "webassembly",
+    "libxaac",
+    "audio",
+    "mp4",
+    "m4a",
+    "stem-mp4"
+  ],
+  "author": "Luis Montes",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monteslu/libxaac-wasm.git"
+  },
+  "homepage": "https://github.com/monteslu/libxaac-wasm",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  }
+}
