@@ -124,10 +124,12 @@ class AacEncoder {
     return val(typed_memory_view(asc_.size(), asc_.data()));
   }
 
-  // AAC-LC encoder/priming delay in samples. libxaac LC introduces one frame
-  // (1024 samples) of algorithmic delay before the first valid output; the muxer
-  // compensates with this value. (1105 is ffmpeg's native encoder; libxaac = 1024.)
-  int encoderDelaySamples() const { return samples_per_frame_; }
+  // AAC-LC encoder/priming delay in samples. Measured empirically against a
+  // decode round-trip (test/bench.js best-alignment search): libxaac LC delays
+  // 1600 samples before the first valid output. The muxer trims this so timing
+  // (e.g. lyric sync) stays aligned. (For comparison, ffmpeg's native aac = 1024
+  // and fdk-aac = 2048; each encoder differs, which is why this is explicit.)
+  int encoderDelaySamples() const { return 1600; }
 
   // Encode one frame. `frames` is a JS array of Float32Array (one per channel);
   // short final frames are zero-padded. Returns a view of this frame's raw AAC

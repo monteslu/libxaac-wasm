@@ -35,20 +35,36 @@ function ffmpegHasFdk() {
   } catch { return false; }
 }
 
-// Segmental SNR in dB between two equal-length PCM channel sets.
-function segmentalSnr(orig, test) {
-  const n = Math.min(orig[0].length, test[0].length);
+// SNR in dB between two PCM channel sets, after sliding `test` left by `delay`
+// samples to undo encoder priming. Without this, a correct encoder still scores
+// near-zero/negative SNR because the decoded signal is shifted vs the source.
+function snr(orig, test, delay = 0) {
+  const n = Math.min(orig[0].length, test[0].length - delay);
+  if (n <= 0) return NaN;
   let num = 0, den = 0;
   for (let c = 0; c < orig.length; c++) {
+    const o = orig[c];
+    const t = test[c];
     for (let i = 0; i < n; i++) {
-      const s = orig[c][i];
-      const e = s - test[c][i];
+      const s = o[i];
+      const e = s - t[i + delay];
       num += s * s;
       den += e * e;
     }
   }
   if (den === 0) return Infinity;
   return 10 * Math.log10(num / den);
+}
+
+// Find the integer delay (0..maxDelay) that maximizes SNR, then return that SNR.
+// This both reports best-case quality and recovers the true priming offset.
+function bestSnr(orig, test, maxDelay) {
+  let best = -Infinity, bestDelay = 0;
+  for (let d = 0; d <= maxDelay; d++) {
+    const v = snr(orig, test, d);
+    if (v > best) { best = v; bestDelay = d; }
+  }
+  return { snr: best, delay: bestDelay };
 }
 
 async function main() {
@@ -72,8 +88,8 @@ async function main() {
   console.log(`bench dir: ${tmp}`);
   console.log(`ffmpeg libfdk_aac: ${fdk ? 'available' : 'no'}`);
   console.log('');
-  console.log('signal    encoder        encode(ms)  size(B)   segSNR(dB)');
-  console.log('-------------------------------------------------------------');
+  console.log('signal    encoder        encode(ms)  size(B)   bestSNR(dB)  delay');
+  console.log('-------------------------------------------------------------------');
 
   for (const sig of signals) {
     const { channels } = genSignal(sig, { seconds: 5, sampleRate, channels: 2 });
@@ -109,17 +125,21 @@ async function main() {
       const decPath = join(tmp, `dec.wav`);
       execFileSync('ffmpeg', ['-y', '-i', path, decPath], { stdio: 'ignore' });
       const dec = decodeWav(readFileSync(decPath));
-      // align lengths (decoder may add priming samples); trim from the front
-      const snr = segmentalSnr(channels, dec.channels);
+      // Decoders/encoders introduce priming delay; search a small window for the
+      // alignment that maximizes SNR so we measure quality, not offset. ~3 AAC
+      // frames covers encoder delay + decoder priming.
+      const { snr: best, delay } = bestSnr(channels, dec.channels, 1024 * 3);
       const size = readFileSync(path).length;
       console.log(
-        `${sig.padEnd(9)} ${name.padEnd(14)} ${(Number.isNaN(ms) ? '-' : ms.toFixed(1)).padStart(9)}  ${String(size).padStart(7)}   ${snr.toFixed(2).padStart(8)}`
+        `${sig.padEnd(9)} ${name.padEnd(14)} ${(Number.isNaN(ms) ? '-' : ms.toFixed(1)).padStart(9)}  ${String(size).padStart(7)}   ${best.toFixed(2).padStart(8)}   ${String(delay).padStart(5)}`
       );
     }
   }
   console.log('');
-  console.log('Note: segSNR here is a coarse gate (no priming alignment / perceptual');
-  console.log('model). For ship decisions add PEAQ/ViSQOL. Higher dB = closer to source.');
+  console.log('bestSNR aligns by the priming delay the search recovers, so it measures');
+  console.log('quality not offset. It is still a coarse gate (no perceptual model); for');
+  console.log('ship decisions add PEAQ/ViSQOL. The recovered delay should match the');
+  console.log("encoder's reported encoderDelaySamples.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
