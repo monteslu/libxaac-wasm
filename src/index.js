@@ -66,22 +66,29 @@ export async function encode({ channels, sampleRate, bitrate = 192000 }) {
     const frameSize = enc.frameSize(); // samples per channel per AAC frame (1024 for LC)
     const total = channels[0].length;
 
-    // Feed the encoder frame by frame; collect raw AAC access units.
-    for (let pos = 0; pos < total; pos += frameSize) {
-      const block = channels.map((ch) => ch.subarray(pos, pos + frameSize));
-      const au = enc.encodeFrame(block, frameSize);
+    // libxaac LC has one frame of encoder/priming delay: the first process() call
+    // primes and the final input frame is still inside the encoder when input ends.
+    // Feed all input frames, then one extra silent frame to push out the tail. The
+    // resulting stream is offset by `encoderDelaySamples`; the downstream muxer
+    // trims that priming so timing stays aligned.
+    const numInputFrames = Math.ceil(total / frameSize);
+    const empty = channels.map(() => new Float32Array(0));
+
+    for (let f = 0; f <= numInputFrames; f++) {
+      const pos = f * frameSize;
+      const block = pos < total ? channels.map((ch) => ch.subarray(pos, pos + frameSize)) : empty;
+      const valid = pos < total ? Math.min(frameSize, total - pos) : 0;
+      const au = enc.encodeFrame(block, valid);
       if (au && au.length) accessUnits.push(au.slice());
     }
-    // Drain any buffered frames the encoder is still holding.
-    let tail;
-    while ((tail = enc.flush()) && tail.length) {
-      accessUnits.push(tail.slice());
-    }
 
+    const audioSpecificConfig = enc.audioSpecificConfig();
     const encoderDelaySamples = enc.encoderDelaySamples();
     const data = wrapAccessUnitsToMp4(accessUnits, {
       sampleRate,
       channels: channels.length,
+      avgBitrate: bitrate,
+      audioSpecificConfig: audioSpecificConfig.length ? audioSpecificConfig.slice() : null,
       encoderDelaySamples,
     });
 

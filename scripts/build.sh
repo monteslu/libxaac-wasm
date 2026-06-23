@@ -28,34 +28,47 @@ OUT_DIR="dist"
 BUILD_DIR="build"
 mkdir -p "$OUT_DIR" "$BUILD_DIR"
 
-# Include dirs: encoder + common + the generic (portable) implementation.
-INCLUDES="-I$VENDOR_DIR/encoder -I$VENDOR_DIR/common -I$VENDOR_DIR/encoder/generic"
+# Include dirs. libxaac's encoder is all-portable C (verified: no arch subdirs
+# under encoder/, unlike the decoder). drc_src holds the loudness/DRC sources.
+INCLUDES="-I$VENDOR_DIR/encoder -I$VENDOR_DIR/common -I$VENDOR_DIR/encoder/drc_src"
 
-# SIMD recipe: take libxaac's x86 path, let Emscripten lower SSE -> WASM SIMD.
-# -U__ARM_NEON__: libxaac's generic selector self-disables under NEON; force the
-# portable path. Single-threaded on purpose (no -pthread): wasm threads need
-# SharedArrayBuffer + COOP/COEP, which we avoid for cross-origin web-admin use.
-CFLAGS="-O3 -msimd128 -msse -msse2 -D__i386__ -U__ARM_NEON__ -DX86 -D_X86_ -w \
+# SIMD recipe: Emscripten lowers x86 SSE intrinsics to WASM SIMD via -msimd128.
+# Single-threaded on purpose (no -pthread): wasm threads need SharedArrayBuffer +
+# COOP/COEP, which we avoid for cross-origin web-admin use.
+CFLAGS="-O3 -msimd128 -msse -msse2 -w \
   -Wno-error=incompatible-pointer-types -Wno-incompatible-pointer-types \
   -Wno-error=implicit-function-declaration -Wno-implicit-function-declaration"
 
-# Encoder source list. Generated once into scripts/encoder_sources.txt by
-# enumerating $VENDOR_DIR/encoder + the generic path (see README "Updating libxaac").
+# Encoder source list: every .c under encoder/ + common/ (all portable C).
 if [ ! -f scripts/encoder_sources.txt ]; then
   echo "Generating encoder source list..."
-  find "$VENDOR_DIR/encoder" "$VENDOR_DIR/common" -name '*.c' \
-    | grep -viE '/(x86|x86_64|armv7|armv8)/' \
-    > scripts/encoder_sources.txt
+  find "$VENDOR_DIR/encoder" "$VENDOR_DIR/common" -name '*.c' > scripts/encoder_sources.txt
 fi
 ENCODER_SOURCES="$(tr '\n' ' ' < scripts/encoder_sources.txt)"
 
-echo "Compiling libxaac encoder (generic path) -> wasm ..."
+# Stage 1: compile libxaac's C sources to objects (as C, NOT c++17). One emcc
+# invocation can't mix -std=c++17 with .c files, so the codec builds separately.
+echo "Stage 1: compiling libxaac C sources ($(wc -l < scripts/encoder_sources.txt) files) ..."
+OBJ_DIR="$BUILD_DIR/obj"
+mkdir -p "$OBJ_DIR"
+i=0
+while IFS= read -r src; do
+  [ -z "$src" ] && continue
+  obj="$OBJ_DIR/$(echo "$src" | tr '/' '_').o"
+  if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ]; then
+    emcc $CFLAGS $INCLUDES -c "$src" -o "$obj" || { echo "compile failed: $src" >&2; exit 1; }
+  fi
+  i=$((i + 1))
+  printf '\r  %d compiled' "$i"
+done < scripts/encoder_sources.txt
+echo ""
+
+# Stage 2: compile the C++ Embind glue and link with the codec objects.
+echo "Stage 2: compiling glue + linking -> wasm ..."
 emcc \
-  $CFLAGS $INCLUDES \
-  --bind \
-  -std=c++17 \
+  -O3 -msimd128 -std=c++17 --bind $INCLUDES \
   src/encoder.cpp \
-  $ENCODER_SOURCES \
+  "$OBJ_DIR"/*.o \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME=createLibxaac \

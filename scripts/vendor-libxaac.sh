@@ -10,7 +10,7 @@
 set -e
 
 LIBXAAC_REPO="https://github.com/ittiam-systems/libxaac.git"
-LIBXAAC_REF="${LIBXAAC_REF:-v1.0}" # TODO: pin to the exact tag validated by the bench
+LIBXAAC_REF="${LIBXAAC_REF:-v0.1.13}" # latest upstream release; re-bench before bumping
 VENDOR_DIR="vendor/libxaac"
 
 if [ -d "$VENDOR_DIR/.git" ]; then

@@ -49,9 +49,14 @@ function audioSpecificConfig(sampleRate, channels) {
   return [b0 & 0xff, b1 & 0xff];
 }
 
-/** esds box (ES descriptor wrapping the AudioSpecificConfig). */
-function esdsBox(sampleRate, channels, avgBitrate) {
-  const asc = audioSpecificConfig(sampleRate, channels);
+/**
+ * esds box (ES descriptor wrapping the AudioSpecificConfig).
+ * Prefer the encoder's own ASC (carries the exact channel/SBR config); fall back
+ * to a synthesized AAC-LC ASC for the common mono/stereo cases.
+ */
+function esdsBox(sampleRate, channels, avgBitrate, asc = null) {
+  if (!asc) asc = audioSpecificConfig(sampleRate, channels);
+  asc = Array.from(asc);
   // DecoderSpecificInfo (tag 0x05)
   const dsi = [0x05, asc.length, ...asc];
   // DecoderConfigDescriptor (tag 0x04): objectTypeIndication 0x40 (AAC), streamType 0x15
@@ -71,8 +76,8 @@ function esdsBox(sampleRate, channels, avgBitrate) {
 }
 
 /** mp4a sample entry containing the esds. */
-function mp4aSampleEntry(sampleRate, channels, avgBitrate) {
-  const esds = esdsBox(sampleRate, channels, avgBitrate);
+function mp4aSampleEntry(sampleRate, channels, avgBitrate, asc) {
+  const esds = esdsBox(sampleRate, channels, avgBitrate, asc);
   return box(
     'mp4a',
     [0, 0, 0, 0, 0, 0], // reserved
@@ -90,10 +95,18 @@ function mp4aSampleEntry(sampleRate, channels, avgBitrate) {
 
 /**
  * @param {Uint8Array[]} accessUnits - raw AAC-LC access units, in order.
- * @param {{sampleRate:number, channels:number, encoderDelaySamples:number}} info
+ * @param {Object} info
+ * @param {number} info.sampleRate
+ * @param {number} info.channels
+ * @param {number} [info.avgBitrate=192000]
+ * @param {Uint8Array|number[]|null} [info.audioSpecificConfig] - encoder's ASC for
+ *   the esds; synthesized for mono/stereo AAC-LC if omitted.
  * @returns {Uint8Array} the .m4a (single AAC track).
  */
-export function wrapAccessUnitsToMp4(accessUnits, { sampleRate, channels, avgBitrate = 192000 }) {
+export function wrapAccessUnitsToMp4(
+  accessUnits,
+  { sampleRate, channels, avgBitrate = 192000, audioSpecificConfig = null }
+) {
   const n = accessUnits.length;
   const sizes = accessUnits.map((au) => au.length);
   const mdatPayload = accessUnits;
@@ -107,7 +120,7 @@ export function wrapAccessUnitsToMp4(accessUnits, { sampleRate, channels, avgBit
   const chunkOffset = ftyp.length + mdatHeader.length;
 
   // --- sample table ---
-  const stsd = box('stsd', u32(0), u32(1), mp4aSampleEntry(sampleRate, channels, avgBitrate));
+  const stsd = box('stsd', u32(0), u32(1), mp4aSampleEntry(sampleRate, channels, avgBitrate, audioSpecificConfig));
 
   // stts: every sample 1024 ticks (timescale = sampleRate).
   const stts = box('stts', u32(0), u32(1), u32(n), u32(SAMPLES_PER_AAC_FRAME));
