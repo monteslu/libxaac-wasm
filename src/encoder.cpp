@@ -29,9 +29,13 @@
 
 extern "C" {
 // Include order mirrors the upstream reference driver
-// (test/encoder/ixheaace_testbench.c): base integer typedefs (WORD32, pVOID, ...)
-// and the USAC constants must precede the public API header.
+// (test/encoder/ixheaace_testbench.c): base typedefs, the DRC headers that define
+// ia_drc_input_config (create() expects pv_drc_cfg to point at one), then the API.
 #include "ixheaac_type_def.h"
+#include "impd_drc_common_enc.h"
+#include "impd_drc_uni_drc.h"
+#include "impd_drc_tables.h"
+#include "impd_drc_api.h"
 #include "iusace_cnst.h"
 #include "ixheaace_api.h"
 }
@@ -40,9 +44,11 @@ using namespace emscripten;
 
 namespace {
 
-// libxaac wants malloc/free hooks on the output config. Plain wrappers; the
-// alignment arg is advisory on wasm (linear memory, 8-byte aligned malloc).
-void* xaac_malloc(uint32_t /*alignment*/, uint32_t size) { return malloc(size); }
+// libxaac's malloc hook is malloc_xheaace(size, alignment) -- size FIRST (verified
+// from ixheaace_allocate in encoder/ixheaace_api.c, which calls it as
+// malloc_xheaace(ui_api_size + 8, DEFAULT_MEM_ALIGN_8)). malloc gives 8/16-byte
+// alignment on wasm, which satisfies DEFAULT_MEM_ALIGN_8.
+void* xaac_malloc(uint32_t size, uint32_t /*alignment*/) { return malloc(size); }
 void xaac_free(void* p) { free(p); }
 
 class AacEncoder {
@@ -69,16 +75,24 @@ class AacEncoder {
     in->i_mps_tree_config = -1;
     in->usac_en = 0;
     in->cplx_pred = 0;
-    in->frame_cmd_flag = 0;
-    in->out_bytes_flag = 0;
+    in->frame_length = 1024;           // FRAME_LEN_1024 for AAC-LC (create() reads this)
+    in->frame_cmd_flag = 1;            // we set frame_length explicitly
+    in->out_bytes_flag = 1;            // we set bitreservoir_size explicitly
     in->user_tns_flag = 0;
     in->user_esbr_flag = 0;
     in->aac_config.bitrate = bitrate;
     in->i_bitrate = bitrate;
     in->aac_config.use_tns = 1;        // TNS on (typical AAC-LC quality)
     in->aac_config.full_bandwidth = 0;
-    in->aac_config.bitreservoir_size = -1; // library default
+    in->aac_config.bitreservoir_size = 768; // APP_BITRES_..._DEF_VALUE_LC from the driver
     in->use_delay_adjustment = 0;
+    in->use_drc_element = 0;
+
+    // The reference driver allocates a zeroed DRC config unconditionally before
+    // create(), even with DRC off; create() expects pv_drc_cfg non-NULL. Mirror it.
+    drc_cfg_ = calloc(1, sizeof(ia_drc_input_config));
+    if (!drc_cfg_) throw std::runtime_error("drc cfg alloc failed");
+    in->pv_drc_cfg = drc_cfg_;
 
     // ---- output config (memory hooks) ----
     out->malloc_xheaace = &xaac_malloc;
@@ -134,6 +148,10 @@ class AacEncoder {
       ixheaace_delete((pVOID)&user_cfg_.output_config);
       created_ = false;
     }
+    if (drc_cfg_) {
+      free(drc_cfg_);
+      drc_cfg_ = nullptr;
+    }
   }
 
   // Planar Float32 [-1,1] -> interleaved WORD16 in the library's input buffer,
@@ -165,6 +183,7 @@ class AacEncoder {
   uint8_t* out_buf_ = nullptr;
   int input_size_ = 0;
   int samples_per_frame_ = 0;
+  void* drc_cfg_ = nullptr;
   std::vector<uint8_t> asc_;
 };
 
